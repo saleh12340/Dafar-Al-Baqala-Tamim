@@ -101,6 +101,35 @@ class WebAppInterface(
     }
 
     /**
+     * Process SAF Uri when user picks a .db file (Scoped Storage safe)
+     */
+    fun processImportUri(uri: android.net.Uri) {
+        executor.execute {
+            try {
+                val importManager = com.example.data.DatabaseImportManager(activity)
+                kotlinx.coroutines.runBlocking {
+                    val result = importManager.importFromUri(uri)
+                    mainHandler.post {
+                        if (result.isSuccess) {
+                            sendImportResultToJs(true, null)
+                            webView.evaluateJavascript(
+                                "if (typeof window.onDatabaseImported === 'function') { window.onDatabaseImported(); } else { window.location.reload(); }",
+                                null
+                            )
+                        } else {
+                            sendImportResultToJs(false, result.exceptionOrNull()?.message ?: "فشل التحقق من سلامة قاعدة البيانات أو استبدال الملف.")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    sendImportResultToJs(false, e.message ?: "خطأ أثناء استيراد قاعدة البيانات.")
+                }
+            }
+        }
+    }
+
+    /**
      * Process SAF input stream when user picks a .db file
      */
     fun processImportStream(inputStream: InputStream?) {

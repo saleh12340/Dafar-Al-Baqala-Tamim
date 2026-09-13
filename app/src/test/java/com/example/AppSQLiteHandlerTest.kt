@@ -38,6 +38,92 @@ class AppSQLiteHandlerTest {
     }
 
     @Test
+    fun testComprehensiveSchemaEntitiesAndView() {
+        val db = sqliteHandler.writableDatabase
+
+        // 1. Verify view transactions_tot_v exists and can be queried
+        val viewCursor = db.rawQuery("SELECT * FROM transactions_tot_v", null)
+        assertNotNull(viewCursor)
+        viewCursor.close()
+
+        // 2. Verify unique index transactions_share_ref_uq
+        val indexCursor = db.rawQuery("PRAGMA index_list('transactions')", null)
+        var foundShareRefIndex = false
+        while (indexCursor.moveToNext()) {
+            val idxName = indexCursor.getString(indexCursor.getColumnIndexOrThrow("name"))
+            if (idxName == "transactions_share_ref_uq") {
+                foundShareRefIndex = true
+                break
+            }
+        }
+        indexCursor.close()
+        assertTrue("Index transactions_share_ref_uq should exist", foundShareRefIndex)
+
+        // 3. Verify groups table
+        db.execSQL("INSERT INTO groups (group_name) VALUES ('مجموعة كبار العملاء');")
+        val grpCursor = db.rawQuery("SELECT id, group_name FROM groups WHERE group_name = 'مجموعة كبار العملاء'", null)
+        assertTrue(grpCursor.moveToFirst())
+        val grpId = grpCursor.getLong(0)
+        grpCursor.close()
+
+        // 4. Verify customers table with new fields: balance, group_id, notes
+        val newCustId = sqliteHandler.insertCustomer(
+            CustomerModel(
+                name = "عميل مميز",
+                phone = "770000000",
+                balance = 1500.0,
+                groupId = grpId,
+                notes = "ملاحظات تفصيلية للعميل"
+            )
+        )
+        assertTrue(newCustId > 0)
+        val fetchedCust = sqliteHandler.getCustomerById(newCustId)
+        assertNotNull(fetchedCust)
+        assertEquals(grpId, fetchedCust?.groupId)
+        assertEquals("ملاحظات تفصيلية للعميل", fetchedCust?.notes)
+
+        // 5. Verify transactions and transactions_d with new columns
+        val txId = sqliteHandler.insertTransaction(
+            TransactionModel(
+                customerId = newCustId,
+                type = "CREDIT",
+                transactionType = "له",
+                amount = 2500.0,
+                currency = "YER",
+                date = "2026-09-13 14:00:00",
+                note = "سداد نقدي",
+                shareRef = "TEST-REF-999"
+            )
+        )
+        assertTrue(txId > 0)
+
+        // 6. Verify detail row in transactions_d
+        val dCursor = db.rawQuery("SELECT item_name, total_price FROM transactions_d WHERE transaction_id = ?", arrayOf(txId.toString()))
+        assertTrue("transactions_d should contain detail record", dCursor.moveToFirst())
+        assertEquals("سداد نقدي", dCursor.getString(0))
+        assertEquals(2500.0, dCursor.getDouble(1), 0.001)
+        dCursor.close()
+
+        // 7. Verify reminders table
+        db.execSQL("INSERT INTO reminders (customer_id, reminder_date, note, is_completed) VALUES (?, ?, ?, ?)",
+            arrayOf(newCustId, "2026-10-01", "موعد سداد الدفعة القادمة", 0)
+        )
+        val remCursor = db.rawQuery("SELECT customer_id, reminder_date, note, is_completed FROM reminders WHERE customer_id = ?", arrayOf(newCustId.toString()))
+        assertTrue("reminders row should exist", remCursor.moveToFirst())
+        assertEquals("2026-10-01", remCursor.getString(1))
+        assertEquals("موعد سداد الدفعة القادمة", remCursor.getString(2))
+        assertEquals(0, remCursor.getInt(3))
+        remCursor.close()
+
+        // 8. Verify transactions_tot_v reflects transaction
+        val vCheckCursor = db.rawQuery("SELECT total_lah, total_amount FROM transactions_tot_v WHERE customer_id = ?", arrayOf(newCustId.toString()))
+        assertTrue(vCheckCursor.moveToFirst())
+        assertEquals(2500.0, vCheckCursor.getDouble(0), 0.001)
+        assertEquals(2500.0, vCheckCursor.getDouble(1), 0.001)
+        vCheckCursor.close()
+    }
+
+    @Test
     fun testCustomerCRUD() {
         val newCustomer = CustomerModel(
             name = "محمد سالم",

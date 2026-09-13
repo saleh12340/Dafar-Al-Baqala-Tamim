@@ -136,21 +136,18 @@ class AccountingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // Database Import and Export with ContentResolver
+    // Database Import and Export with ContentResolver and Scoped Storage safety
     fun importDatabase(uri: Uri, onResult: (Boolean, String?) -> Unit) {
         viewModelScope.launch {
             try {
-                val inputStream = getApplication<Application>().contentResolver.openInputStream(uri)
-                if (inputStream == null) {
-                    onResult(false, "تعذر فتح ملف قاعدة البيانات")
-                    return@launch
-                }
-                val success = repository.importDatabase(inputStream)
-                if (success) {
+                val importManager = com.example.data.DatabaseImportManager(getApplication())
+                val result = importManager.importFromUri(uri)
+                if (result.isSuccess) {
                     refreshSelectedCustomer()
                     onResult(true, null)
                 } else {
-                    onResult(false, "فشل التحقق من سلامة الملف أو تلف قاعدة البيانات")
+                    val errorMsg = result.exceptionOrNull()?.message ?: "فشل استيراد قاعدة البيانات أو التحقق من صحة الملف"
+                    onResult(false, errorMsg)
                 }
             } catch (e: Exception) {
                 onResult(false, e.message ?: "خطأ أثناء استيراد قاعدة البيانات")

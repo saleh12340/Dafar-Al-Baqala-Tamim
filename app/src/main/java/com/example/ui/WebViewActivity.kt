@@ -18,8 +18,7 @@ class WebViewActivity : ComponentActivity() {
     private val importPickerLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             try {
-                val inputStream = contentResolver.openInputStream(uri)
-                webAppInterface.processImportStream(inputStream)
+                webAppInterface.processImportUri(uri)
             } catch (e: Exception) {
                 Toast.makeText(this, "خطأ في قراءة ملف الاستيراد: ${e.message}", Toast.LENGTH_LONG).show()
             }

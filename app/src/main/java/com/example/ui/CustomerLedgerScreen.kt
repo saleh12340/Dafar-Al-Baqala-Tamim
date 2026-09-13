@@ -255,11 +255,12 @@ fun CustomerLedgerScreen(
                                 .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf("+1/4" to 0.25, "+1/2" to 0.5, "+3/4" to 0.75, "+100" to 100.0, "+500" to 500.0, "+1000" to 1000.0).forEach { (label, value) ->
+                            listOf("+100" to 100.0, "+500" to 500.0, "+1000" to 1000.0, "+5000" to 5000.0).forEach { (label, value) ->
                                 SuggestionChip(
                                     onClick = {
                                         val current = quickAmountText.toDoubleOrNull() ?: 0.0
-                                        quickAmountText = (current + value).toString()
+                                        val newAmount = current + value
+                                        quickAmountText = if (newAmount % 1.0 == 0.0) newAmount.toLong().toString() else newAmount.toString()
                                     },
                                     label = { Text(label, fontSize = 11.sp) }
                                 )
