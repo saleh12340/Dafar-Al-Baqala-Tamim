@@ -59,6 +59,10 @@ class AppRepository(private val sqliteHandler: AppSQLiteHandler) {
         sqliteHandler.deleteTransaction(id)
     }
 
+    suspend fun closeAccount(customerId: Long): Boolean = withContext(Dispatchers.IO) {
+        sqliteHandler.closeAccount(customerId)
+    }
+
     suspend fun importDatabase(inputStream: InputStream): Boolean = withContext(Dispatchers.IO) {
         sqliteHandler.importDatabaseFile(inputStream)
     }

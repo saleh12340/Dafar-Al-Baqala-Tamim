@@ -128,6 +128,14 @@ class AccountingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun closeAccount(customerId: Long, onComplete: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val success = repository.closeAccount(customerId)
+            refreshSelectedCustomer()
+            onComplete(success)
+        }
+    }
+
     // Database Import and Export with ContentResolver
     fun importDatabase(uri: Uri, onResult: (Boolean, String?) -> Unit) {
         viewModelScope.launch {

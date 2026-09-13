@@ -171,6 +171,15 @@ fun HomeScreen(viewModel: AccountingViewModel) {
                 viewModel.deleteTransaction(txId) {
                     snackbarMessage = "تم حذف القيد وإعادة احتساب الرصيد"
                 }
+            },
+            onCloseAccount = {
+                viewModel.closeAccount(activeCustomer.id) { success ->
+                    snackbarMessage = if (success) {
+                        "تم إغلاق وتصفية الحساب وترحيل الرصيد بنجاح"
+                    } else {
+                        "تعذر إغلاق الحساب"
+                    }
+                }
             }
         )
     } else {
@@ -689,28 +698,71 @@ fun AccountsListScreen(
     onDeleteCustomer: (Long) -> Unit
 ) {
     var customerToDelete by remember { mutableStateOf<CustomerModel?>(null) }
+    var selectedFilter by remember { mutableStateOf("الكل") } // "الكل", "مدين", "دائن", "مصفى"
 
-    if (customers.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = Icons.Default.People,
-                    contentDescription = null,
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text("لا توجد حسابات عملاء مسجلة بعد", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+    val filteredList = remember(customers, selectedFilter) {
+        when (selectedFilter) {
+            "مدين" -> customers.filter { it.netBalance < -0.001 }
+            "دائن" -> customers.filter { it.netBalance > 0.001 }
+            "مصفى" -> customers.filter { Math.abs(it.netBalance) <= 0.001 }
+            else -> customers
         }
-    } else {
-        LazyColumn(
+    }
+
+    val debtorsCount = remember(customers) { customers.count { it.netBalance < -0.001 } }
+    val creditorsCount = remember(customers) { customers.count { it.netBalance > 0.001 } }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Debt status filter chips (ميزات دفتر الحسابات)
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            items(customers, key = { it.id }) { cust ->
+            FilterChip(
+                selected = selectedFilter == "الكل",
+                onClick = { selectedFilter = "الكل" },
+                label = { Text("الكل (${customers.size})", fontSize = 12.sp) }
+            )
+            FilterChip(
+                selected = selectedFilter == "مدين",
+                onClick = { selectedFilter = "مدين" },
+                label = { Text("مدينون (${debtorsCount})", fontSize = 12.sp, color = if (selectedFilter == "مدين") MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.error) }
+            )
+            FilterChip(
+                selected = selectedFilter == "دائن",
+                onClick = { selectedFilter = "دائن" },
+                label = { Text("دائنون (${creditorsCount})", fontSize = 12.sp, color = if (selectedFilter == "دائن") MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary) }
+            )
+            FilterChip(
+                selected = selectedFilter == "مصفى",
+                onClick = { selectedFilter = "مصفى" },
+                label = { Text("مصفى", fontSize = 12.sp) }
+            )
+        }
+
+        if (filteredList.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.People,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("لا توجد حسابات مطابقة لهذا الفلتر", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filteredList, key = { it.id }) { cust ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -800,6 +852,7 @@ fun AccountsListScreen(
                 }
             }
         }
+    }
     }
 
     if (customerToDelete != null) {

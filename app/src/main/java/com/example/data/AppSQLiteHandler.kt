@@ -627,6 +627,82 @@ class AppSQLiteHandler(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
     }
 
     /**
+     * Signature feature from "دفتر الحسابات" (com.valdio.valdioveliu.recyclerview):
+     * Closes an account by consolidating all previous transactions of the customer
+     * into a single opening balance transaction with the final net balance.
+     */
+    fun closeAccount(customerId: Long): Boolean {
+        val db = writableDatabase
+        db.beginTransaction()
+        var success = false
+        try {
+            // 1. Calculate current net balance
+            val cursor = db.rawQuery(
+                """
+                SELECT 
+                    COALESCE(SUM(CASE WHEN transaction_type = 'له' THEN amount ELSE -amount END), 0.0) as net_balance
+                FROM transactions
+                WHERE customer_id = ?
+                """,
+                arrayOf(customerId.toString())
+            )
+            var netBalance = 0.0
+            if (cursor.moveToFirst()) {
+                netBalance = cursor.getDouble(0)
+            }
+            cursor.close()
+
+            // 2. Delete all existing transaction details and transactions for this customer
+            val txIdsCursor = db.rawQuery("SELECT id FROM transactions WHERE customer_id = ?", arrayOf(customerId.toString()))
+            while (txIdsCursor.moveToNext()) {
+                val txId = txIdsCursor.getLong(0)
+                db.delete("transactions_d", "transaction_id = ?", arrayOf(txId.toString()))
+            }
+            txIdsCursor.close()
+            db.delete("transactions", "customer_id = ?", arrayOf(customerId.toString()))
+
+            // 3. If net balance is non-zero, create a single consolidated opening balance transaction
+            if (Math.abs(netBalance) > 0.0001) {
+                val txType = if (netBalance > 0) "له" else "عليه"
+                val amount = Math.abs(netBalance)
+                val shareRef = "CLOSE-${System.currentTimeMillis()}-${(1000..9999).random()}"
+
+                val txValues = ContentValues().apply {
+                    put("customer_id", customerId)
+                    put("amount", amount)
+                    put("currency_id", 1L)
+                    put("transaction_type", txType)
+                    put("timestamp", System.currentTimeMillis())
+                    put("ledger_balance", netBalance)
+                    put("share_ref", shareRef)
+                }
+                val newTxId = db.insert("transactions", null, txValues)
+                if (newTxId != -1L) {
+                    val detailValues = ContentValues().apply {
+                        put("transaction_id", newTxId)
+                        put("detail_note", "رصيد مدور / تصفية وإغلاق الحساب")
+                        put("amount", amount)
+                    }
+                    db.insert("transactions_d", null, detailValues)
+                }
+            }
+
+            recalculateCustomerBalances(db, customerId)
+            db.setTransactionSuccessful()
+            success = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error closing account", e)
+        } finally {
+            db.endTransaction()
+        }
+
+        if (success) {
+            notifyDataChanged()
+        }
+        return success
+    }
+
+    /**
      * Recalculates the cumulative running ledger balance for a specific customer
      * across their entire transaction timeline (ordered by timestamp ASC, id ASC).
      */

@@ -31,12 +31,14 @@ fun CustomerLedgerScreen(
     onBack: () -> Unit,
     onAddTransaction: () -> Unit,
     onEditTransaction: (TransactionModel) -> Unit,
-    onDeleteTransaction: (Long) -> Unit
+    onDeleteTransaction: (Long) -> Unit,
+    onCloseAccount: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd - hh:mm a", Locale("ar")) }
 
     var transactionToDelete by remember { mutableStateOf<TransactionModel?>(null) }
+    var showCloseAccountDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -55,11 +57,32 @@ fun CustomerLedgerScreen(
                     }
                 },
                 actions = {
+                    // PDF Print Statement (ميزة تصدير وطباعة PDF)
+                    IconButton(
+                        onClick = { printCustomerStatementPdf(context, customer, transactions) },
+                        modifier = Modifier.testTag("print_pdf_statement_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.Print, contentDescription = "طباعة / تصدير PDF")
+                    }
+
+                    // Share Statement
                     IconButton(
                         onClick = { shareCustomerStatement(context, customer, transactions) },
                         modifier = Modifier.testTag("share_statement_button")
                     ) {
                         Icon(imageVector = Icons.Default.Share, contentDescription = "مشاركة كشف الحساب")
+                    }
+
+                    // Close Account Action (ميزة إغلاق الحساب من دفتر الحسابات)
+                    IconButton(
+                        onClick = { showCloseAccountDialog = true },
+                        modifier = Modifier.testTag("close_account_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LockReset,
+                            contentDescription = "إغلاق وتصفية الحساب",
+                            tint = MaterialTheme.colorScheme.error
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -361,6 +384,127 @@ fun CustomerLedgerScreen(
                 }
             }
         )
+    }
+
+    // Close Account Confirmation Dialog (ميزة إغلاق الحساب في دفتر الحسابات)
+    if (showCloseAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showCloseAccountDialog = false },
+            title = { Text("تأكيد إغلاق وتصفية الحساب") },
+            text = {
+                Text(
+                    "هل تريد إغلاق هذا الحساب؟\n\nستقوم هذه العملية بحذف كافة العمليات القديمة وتجميعها في قيد افتتاحي واحد بالرصيد المتبقي الحالي (${customer.netBalance}).\n\nتُستخدم هذه الميزة لبدء صفحة جديدة في الدفتر مع الحفاظ على الرصيد الدقيق."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCloseAccountDialog = false
+                        onCloseAccount()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("تأكيد إغلاق الحساب")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCloseAccountDialog = false }) {
+                    Text("إلغاء")
+                }
+            }
+        )
+    }
+}
+
+private fun printCustomerStatementPdf(context: Context, customer: CustomerModel, transactions: List<TransactionModel>) {
+    val printManager = context.getSystemService(Context.PRINT_SERVICE) as? android.print.PrintManager ?: return
+    val webView = android.webkit.WebView(context)
+    val dateFormat = SimpleDateFormat("yyyy/MM/dd hh:mm a", Locale("ar"))
+
+    val rowsHtml = StringBuilder()
+    transactions.forEachIndexed { idx, tx ->
+        val typeBadge = if (tx.transactionType == "له") {
+            "<span style='color: #2e7d32; font-weight: bold;'>له (دائن)</span>"
+        } else {
+            "<span style='color: #c62828; font-weight: bold;'>عليه (مدين)</span>"
+        }
+        val dateStr = dateFormat.format(Date(tx.timestamp))
+        rowsHtml.append("""
+            <tr>
+                <td style='border: 1px solid #ddd; padding: 8px; text-align: center;'>${idx + 1}</td>
+                <td style='border: 1px solid #ddd; padding: 8px;'>$dateStr</td>
+                <td style='border: 1px solid #ddd; padding: 8px;'>$typeBadge</td>
+                <td style='border: 1px solid #ddd; padding: 8px;'>${tx.detailNote.ifBlank { "-" }}</td>
+                <td style='border: 1px solid #ddd; padding: 8px; font-weight: bold;'>${tx.amount} ${tx.currencyName}</td>
+                <td style='border: 1px solid #ddd; padding: 8px;'>${tx.ledgerBalance}</td>
+            </tr>
+        """.trimIndent())
+    }
+
+    val htmlDocument = """
+        <!DOCTYPE html>
+        <html dir="rtl" lang="ar">
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: sans-serif; margin: 20px; color: #212121; }
+                .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 12px; margin-bottom: 16px; }
+                .title { font-size: 20px; font-weight: bold; margin: 0; }
+                .subtitle { font-size: 14px; color: #555; margin-top: 4px; }
+                .info-box { background-color: #f5f5f5; border-radius: 6px; padding: 12px; margin-bottom: 16px; }
+                .info-row { margin-bottom: 6px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+                th { background-color: #f0f0f0; border: 1px solid #ddd; padding: 8px; text-align: center; font-weight: bold; }
+                .totals { margin-top: 20px; border-top: 2px solid #333; padding-top: 10px; }
+                .total-line { font-size: 15px; font-weight: bold; margin-bottom: 4px; }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1 class="title">بقالة العزي للمواد الغذائية والتموينية</h1>
+                <div class="subtitle">هاتف: 726425052 - كشف حساب تفصيلي</div>
+            </div>
+            <div class="info-box">
+                <div class="info-row"><strong>اسم العميل:</strong> ${customer.name}</div>
+                <div class="info-row"><strong>رقم الهاتف:</strong> ${customer.phone.ifBlank { "غير متوفر" }}</div>
+                <div class="info-row"><strong>تاريخ التقرير:</strong> ${SimpleDateFormat("yyyy/MM/dd", Locale("ar")).format(Date())}</div>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>م</th>
+                        <th>التاريخ والوقت</th>
+                        <th>النوع</th>
+                        <th>البيان والتفاصيل</th>
+                        <th>المبلغ</th>
+                        <th>الرصيد التراكمي</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    $rowsHtml
+                </tbody>
+            </table>
+            <div class="totals">
+                <div class="total-line">إجمالي له (المدفوع): ${customer.totalLah}</div>
+                <div class="total-line">إجمالي عليه (المشتريات والديون): ${customer.totalAlayh}</div>
+                <div class="total-line" style="color: ${if (customer.netBalance >= 0) "#2e7d32" else "#c62828"}; font-size: 17px;">
+                    الرصيد النهائي المتبقي: ${customer.netBalance}
+                </div>
+            </div>
+        </body>
+        </html>
+    """.trimIndent()
+
+    webView.loadDataWithBaseURL(null, htmlDocument, "text/html; charset=utf-8", "utf-8", null)
+    webView.webViewClient = object : android.webkit.WebViewClient() {
+        override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+            val printAdapter = webView.createPrintDocumentAdapter("كشف_حساب_${customer.name}")
+            printManager.print(
+                "كشف حساب - ${customer.name}",
+                printAdapter,
+                android.print.PrintAttributes.Builder().build()
+            )
+        }
     }
 }
 

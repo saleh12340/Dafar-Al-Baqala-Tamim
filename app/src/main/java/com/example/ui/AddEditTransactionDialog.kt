@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.CustomerModel
 import com.example.data.TransactionModel
 
@@ -155,6 +156,50 @@ fun AddEditTransactionDialog(
                         .testTag("transaction_amount_input"),
                     singleLine = true
                 )
+
+                // Quick Fractions & Amounts Row (ميزة إضافة الكسور في تطبيق دفتر الحسابات)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "إضافة كسور ومبالغ سريعة:",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf(0.25 to "+¼", 0.5 to "+½", 0.75 to "+¾").forEach { (frac, label) ->
+                            SuggestionChip(
+                                onClick = {
+                                    val current = amountStr.toDoubleOrNull() ?: 0.0
+                                    amountStr = String.format(java.util.Locale.US, "%.2f", current + frac)
+                                },
+                                label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        SuggestionChip(
+                            onClick = {
+                                val current = amountStr.toDoubleOrNull() ?: 0.0
+                                amountStr = String.format(java.util.Locale.US, "%.0f", current + 100)
+                            },
+                            label = { Text("+100", fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        SuggestionChip(
+                            onClick = {
+                                val current = amountStr.toDoubleOrNull() ?: 0.0
+                                amountStr = String.format(java.util.Locale.US, "%.0f", current + 500)
+                            },
+                            label = { Text("+500", fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        SuggestionChip(
+                            onClick = { amountStr = "" },
+                            label = { Text("C", fontSize = 11.sp, color = MaterialTheme.colorScheme.error) }
+                        )
+                    }
+                }
 
                 // Currency selector dropdown
                 ExposedDropdownMenuBox(
