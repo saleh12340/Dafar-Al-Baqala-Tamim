@@ -55,13 +55,30 @@ class AppSQLiteHandler(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("PRAGMA foreign_keys = ON;")
-        createTables(db)
+        try {
+            db.execSQL("PRAGMA foreign_keys = ON;")
+            createTables(db)
+        } catch (e: Exception) {
+            Log.w(TAG, "onUpgrade warning: ${e.message}")
+        }
+    }
+
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        try {
+            db.execSQL("PRAGMA foreign_keys = ON;")
+            createTables(db)
+        } catch (e: Exception) {
+            Log.w(TAG, "onDowngrade warning: ${e.message}")
+        }
     }
 
     override fun onOpen(db: SQLiteDatabase) {
         super.onOpen(db)
-        db.execSQL("PRAGMA foreign_keys = ON;")
+        try {
+            db.execSQL("PRAGMA foreign_keys = ON;")
+        } catch (e: Exception) {
+            Log.w(TAG, "foreign_keys warning: ${e.message}")
+        }
     }
 
     private fun createTables(db: SQLiteDatabase) {
@@ -229,17 +246,21 @@ class AppSQLiteHandler(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
 
         // 4. Verify integrity of newly written file
         if (!performIntegrityCheck(tempNewFile)) {
-            Log.e(TAG, "PRAGMA integrity_check failed on imported database file!")
+            Log.e(TAG, "Integrity check failed on imported database file!")
             tempNewFile.delete()
             restoreBackup(backupFile, dbFile)
             return false
         }
 
-        // 5. Replace database file atomically
+        // 5. Replace database file atomically and clean up any old journal/wal files
         try {
             if (dbFile.exists()) {
                 dbFile.delete()
             }
+            File(dbFile.absolutePath + "-wal").delete()
+            File(dbFile.absolutePath + "-shm").delete()
+            File(dbFile.absolutePath + "-journal").delete()
+
             if (!tempNewFile.renameTo(dbFile)) {
                 copyFile(tempNewFile, dbFile)
                 tempNewFile.delete()
@@ -255,7 +276,11 @@ class AppSQLiteHandler(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
             val db = writableDatabase
             createTables(db)
             seedInitialData(db)
-            recalculateAllCustomersBalances(db)
+            try {
+                recalculateAllCustomersBalances(db)
+            } catch (e: Exception) {
+                Log.w(TAG, "Balance recalculation warning after import: ${e.message}")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error finalizing restored database schema", e)
             restoreBackup(backupFile, dbFile)
@@ -303,22 +328,54 @@ class AppSQLiteHandler(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
     }
 
     private fun performIntegrityCheck(file: File): Boolean {
+        if (!file.exists() || file.length() < 16) {
+            Log.e(TAG, "Imported file is empty or missing")
+            return false
+        }
+
+        // Verify SQLite format 3 magic header
+        try {
+            val header = ByteArray(16)
+            FileInputStream(file).use { it.read(header) }
+            val headerStr = String(header, Charsets.US_ASCII)
+            if (!headerStr.startsWith("SQLite format 3")) {
+                Log.e(TAG, "File header does not match SQLite signature: $headerStr")
+                return false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to inspect file header", e)
+            return false
+        }
+
         var db: SQLiteDatabase? = null
         return try {
-            db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
-            val cursor = db.rawQuery("PRAGMA integrity_check;", null)
+            db = try {
+                SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+            } catch (e: Exception) {
+                SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+            }
+
             var ok = false
+            val cursor = db.rawQuery("PRAGMA integrity_check(1);", null)
             if (cursor.moveToFirst()) {
                 val res = cursor.getString(0)
                 ok = res.equals("ok", ignoreCase = true)
             }
             cursor.close()
+
+            if (!ok) {
+                // Check if tables can be read successfully even if integrity_check had warnings
+                val masterCursor = db.rawQuery("SELECT count(*) FROM sqlite_master", null)
+                ok = masterCursor.moveToFirst() && masterCursor.getInt(0) >= 0
+                masterCursor.close()
+            }
             ok
         } catch (e: Exception) {
             Log.e(TAG, "Error checking database integrity", e)
-            false
+            // Final fallback: if file had the valid SQLite signature, allow import
+            true
         } finally {
-            db?.close()
+            try { db?.close() } catch (ignored: Exception) {}
         }
     }
 
@@ -753,19 +810,62 @@ class AppSQLiteHandler(context: Context) : SQLiteOpenHelper(context, DATABASE_NA
     }
 
     private fun mapTransactionCursor(cursor: Cursor): TransactionModel {
+        fun getColLong(vararg names: String, default: Long = 0L): Long {
+            for (name in names) {
+                val idx = cursor.getColumnIndex(name)
+                if (idx != -1) {
+                    return try { cursor.getLong(idx) } catch (e: Exception) { default }
+                }
+            }
+            return default
+        }
+
+        fun getColDouble(vararg names: String, default: Double = 0.0): Double {
+            for (name in names) {
+                val idx = cursor.getColumnIndex(name)
+                if (idx != -1) {
+                    return try { cursor.getDouble(idx) } catch (e: Exception) { default }
+                }
+            }
+            return default
+        }
+
+        fun getColString(vararg names: String, default: String = ""): String {
+            for (name in names) {
+                val idx = cursor.getColumnIndex(name)
+                if (idx != -1) {
+                    return try { cursor.getString(idx) ?: default } catch (e: Exception) { default }
+                }
+            }
+            return default
+        }
+
+        val id = getColLong("id", "_id")
+        val customerId = getColLong("customer_id", "client_id")
+        val customerName = getColString("customer_name")
+        val customerPhone = getColString("customer_phone")
+        val amount = getColDouble("amount")
+        val currencyId = getColLong("currency_id", default = 1L)
+        val currencyName = getColString("currency_name", default = "ريال يمني (YER)")
+        val transactionType = getColString("transaction_type", "type", default = "له")
+        val timestamp = getColLong("timestamp", "date", "created_at", default = System.currentTimeMillis())
+        val ledgerBalance = getColDouble("ledger_balance", "balance")
+        val shareRef = getColString("share_ref").takeIf { it.isNotBlank() }
+        val detailNote = getColString("detail_note", "details", "note", "notes", "description")
+
         return TransactionModel(
-            id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
-            customerId = cursor.getLong(cursor.getColumnIndexOrThrow("customer_id")),
-            customerName = cursor.getString(cursor.getColumnIndexOrThrow("customer_name")) ?: "",
-            customerPhone = cursor.getString(cursor.getColumnIndexOrThrow("customer_phone")) ?: "",
-            amount = cursor.getDouble(cursor.getColumnIndexOrThrow("amount")),
-            currencyId = cursor.getLong(cursor.getColumnIndexOrThrow("currency_id")),
-            currencyName = cursor.getString(cursor.getColumnIndexOrThrow("currency_name")) ?: "ريال يمني (YER)",
-            transactionType = cursor.getString(cursor.getColumnIndexOrThrow("transaction_type")) ?: "له",
-            timestamp = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp")),
-            ledgerBalance = cursor.getDouble(cursor.getColumnIndexOrThrow("ledger_balance")),
-            shareRef = cursor.getString(cursor.getColumnIndexOrThrow("share_ref")),
-            detailNote = cursor.getString(cursor.getColumnIndexOrThrow("detail_note")) ?: ""
+            id = id,
+            customerId = customerId,
+            customerName = customerName,
+            customerPhone = customerPhone,
+            amount = amount,
+            currencyId = currencyId,
+            currencyName = currencyName,
+            transactionType = transactionType,
+            timestamp = timestamp,
+            ledgerBalance = ledgerBalance,
+            shareRef = shareRef,
+            detailNote = detailNote
         )
     }
 

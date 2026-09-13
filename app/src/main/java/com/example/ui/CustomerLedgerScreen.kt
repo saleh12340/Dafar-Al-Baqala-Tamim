@@ -32,22 +32,68 @@ fun CustomerLedgerScreen(
     onAddTransaction: () -> Unit,
     onEditTransaction: (TransactionModel) -> Unit,
     onDeleteTransaction: (Long) -> Unit,
-    onCloseAccount: () -> Unit = {}
+    onCloseAccount: () -> Unit = {},
+    onQuickAddTransaction: (amount: Double, type: String, detailNote: String, currencyId: Long, dateMillis: Long) -> Unit = { _, _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd - hh:mm a", Locale("ar")) }
+    val displayDateFormat = remember { SimpleDateFormat("dd-MM-yyyy", Locale.US) }
 
     var transactionToDelete by remember { mutableStateOf<TransactionModel?>(null) }
     var showCloseAccountDialog by remember { mutableStateOf(false) }
+
+    // Search inside Customer Ledger
+    var isSearchActive by remember { mutableStateOf(false) }
+    var ledgerSearchQuery by remember { mutableStateOf("") }
+
+    // Quick Entry Form States (مطابق لشاشة "إضافة مبلغ" في دفتر الحسابات)
+    var quickAmountText by remember { mutableStateOf("") }
+    var quickDetailsText by remember { mutableStateOf("") }
+    var selectedCurrencyId by remember { mutableStateOf(1L) } // 1: يمني, 2: سعودي, 3: دولار
+    var showQuickCalcChips by remember { mutableStateOf(false) }
+    var lastAddedBanner by remember { mutableStateOf<Pair<String, TransactionModel?>?>(null) }
+
+    // Filter transactions by ledger search query
+    val displayedTransactions = remember(transactions, ledgerSearchQuery) {
+        if (ledgerSearchQuery.isBlank()) {
+            transactions
+        } else {
+            transactions.filter {
+                it.detailNote.contains(ledgerSearchQuery, ignoreCase = true) ||
+                it.amount.toString().contains(ledgerSearchQuery) ||
+                it.transactionType.contains(ledgerSearchQuery)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(text = customer.name, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        if (customer.phone.isNotBlank()) {
-                            Text(text = "هاتف: ${customer.phone}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (isSearchActive) {
+                        OutlinedTextField(
+                            value = ledgerSearchQuery,
+                            onValueChange = { ledgerSearchQuery = it },
+                            placeholder = { Text("بحث في قيود العميل...", fontSize = 13.sp) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            singleLine = true,
+                            trailingIcon = {
+                                IconButton(onClick = {
+                                    ledgerSearchQuery = ""
+                                    isSearchActive = false
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "إلغاء البحث")
+                                }
+                            }
+                        )
+                    } else {
+                        Column {
+                            Text(text = customer.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                            if (customer.phone.isNotBlank()) {
+                                Text(text = "هاتف: ${customer.phone}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 },
@@ -57,32 +103,43 @@ fun CustomerLedgerScreen(
                     }
                 },
                 actions = {
-                    // PDF Print Statement (ميزة تصدير وطباعة PDF)
-                    IconButton(
-                        onClick = { printCustomerStatementPdf(context, customer, transactions) },
-                        modifier = Modifier.testTag("print_pdf_statement_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.Print, contentDescription = "طباعة / تصدير PDF")
-                    }
+                    if (!isSearchActive) {
+                        // Search in ledger
+                        IconButton(onClick = { isSearchActive = true }) {
+                            Icon(imageVector = Icons.Default.Search, contentDescription = "بحث في القيود")
+                        }
 
-                    // Share Statement
-                    IconButton(
-                        onClick = { shareCustomerStatement(context, customer, transactions) },
-                        modifier = Modifier.testTag("share_statement_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.Share, contentDescription = "مشاركة كشف الحساب")
-                    }
+                        // PDF Print Statement (أيقونة PDF حمراء بارزة كما في المرجع)
+                        IconButton(
+                            onClick = { printCustomerStatementPdf(context, customer, transactions) },
+                            modifier = Modifier.testTag("print_pdf_statement_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "تصدير / طباعة PDF",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
 
-                    // Close Account Action (ميزة إغلاق الحساب من دفتر الحسابات)
-                    IconButton(
-                        onClick = { showCloseAccountDialog = true },
-                        modifier = Modifier.testTag("close_account_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.LockReset,
-                            contentDescription = "إغلاق وتصفية الحساب",
-                            tint = MaterialTheme.colorScheme.error
-                        )
+                        // Share Statement
+                        IconButton(
+                            onClick = { shareCustomerStatement(context, customer, transactions) },
+                            modifier = Modifier.testTag("share_statement_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.Share, contentDescription = "مشاركة كشف الحساب")
+                        }
+
+                        // Close Account Action (ميزة إغلاق الحساب من دفتر الحسابات)
+                        IconButton(
+                            onClick = { showCloseAccountDialog = true },
+                            modifier = Modifier.testTag("close_account_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LockReset,
+                                contentDescription = "إغلاق وتصفية الحساب",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -94,7 +151,7 @@ fun CustomerLedgerScreen(
                 containerColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.testTag("fab_add_customer_transaction")
             ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = "إضافة قيد للعميل")
+                Icon(imageVector = Icons.Default.Add, contentDescription = "إضافة قيد مفصل")
             }
         }
     ) { innerPadding ->
@@ -103,74 +160,290 @@ fun CustomerLedgerScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Customer Balances Summary Header Card
-            ElevatedCard(
+            // Embedded Quick Add Form (تصميم مطابق للقطات شاشة المرجع)
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(12.dp)
-                    .testTag("customer_summary_card"),
-                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    // Customer Tag & Date
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
-                            Text("كشف حساب العميل", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(customer.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = customer.name,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
                         }
-                        if (customer.accountDetails.isNotBlank()) {
-                            Surface(
-                                shape = MaterialTheme.shapes.small,
-                                color = MaterialTheme.colorScheme.secondaryContainer
+
+                        // Date badge
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surface
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = customer.accountDetails,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(displayDateFormat.format(Date()), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Row: Calculator Icon + Amount Field + Clear
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        IconButton(
+                            onClick = { showQuickCalcChips = !showQuickCalcChips },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.small)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Calculate,
+                                contentDescription = "آلة حاسبة واختصارات مبالغ",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = quickAmountText,
+                            onValueChange = { quickAmountText = it },
+                            placeholder = { Text("المبلغ", fontSize = 14.sp) },
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal
+                            ),
+                            trailingIcon = {
+                                if (quickAmountText.isNotBlank()) {
+                                    IconButton(onClick = { quickAmountText = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "مسح", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp)
+                                .testTag("quick_amount_input"),
+                            singleLine = true
+                        )
+                    }
+
+                    // Quick increment suggestions
+                    if (showQuickCalcChips) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf("+1/4" to 0.25, "+1/2" to 0.5, "+3/4" to 0.75, "+100" to 100.0, "+500" to 500.0, "+1000" to 1000.0).forEach { (label, value) ->
+                                SuggestionChip(
+                                    onClick = {
+                                        val current = quickAmountText.toDoubleOrNull() ?: 0.0
+                                        quickAmountText = (current + value).toString()
+                                    },
+                                    label = { Text(label, fontSize = 11.sp) }
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
+                    // Row: Details + Currency Chips
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceAround
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("إجمالي له", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                text = "${customer.totalLah}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        OutlinedTextField(
+                            value = quickDetailsText,
+                            onValueChange = { quickDetailsText = it },
+                            placeholder = { Text("التفاصيل (سكر، بر، موصل، تسديد...)", fontSize = 13.sp) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp)
+                                .testTag("quick_details_input"),
+                            singleLine = true
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Currencies selector
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = selectedCurrencyId == 1L,
+                            onClick = { selectedCurrencyId = 1L },
+                            label = { Text("يمني", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = selectedCurrencyId == 2L,
+                            onClick = { selectedCurrencyId = 2L },
+                            label = { Text("سعودي", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = selectedCurrencyId == 3L,
+                            onClick = { selectedCurrencyId = 3L },
+                            label = { Text("دولار", fontSize = 11.sp) }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Side-by-Side Large Action Buttons (مطابق للمرجع: ▲ له و ▼ عليه)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Green Button: له (تسديد / إيداع)
+                        Button(
+                            onClick = {
+                                val amount = quickAmountText.toDoubleOrNull()
+                                if (amount != null && amount > 0) {
+                                    val note = quickDetailsText.trim()
+                                    onQuickAddTransaction(amount, "له", note, selectedCurrencyId, System.currentTimeMillis())
+                                    lastAddedBanner = Pair("له $amount ${if (note.isNotBlank()) note else ""}".trim(), null)
+                                    quickAmountText = ""
+                                    quickDetailsText = ""
+                                }
+                            },
+                            enabled = quickAmountText.toDoubleOrNull() != null && quickAmountText.toDoubleOrNull()!! > 0,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("btn_quick_lah"),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("▲  له", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("إجمالي عليه", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                text = "${customer.totalAlayh}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.error
-                            )
+
+                        // Red Button: عليه (دين / مشتريات)
+                        Button(
+                            onClick = {
+                                val amount = quickAmountText.toDoubleOrNull()
+                                if (amount != null && amount > 0) {
+                                    val note = quickDetailsText.trim()
+                                    onQuickAddTransaction(amount, "عليه", note, selectedCurrencyId, System.currentTimeMillis())
+                                    lastAddedBanner = Pair("عليه $amount ${if (note.isNotBlank()) note else ""}".trim(), null)
+                                    quickAmountText = ""
+                                    quickDetailsText = ""
+                                }
+                            },
+                            enabled = quickAmountText.toDoubleOrNull() != null && quickAmountText.toDoubleOrNull()!! > 0,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("btn_quick_alayh"),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("▼  عليه", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("الرصيد المتبقي", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(
-                                text = "${customer.netBalance}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = if (customer.netBalance >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                            )
+                    }
+                }
+            }
+
+            // Quick Added Alert Notification Banner (مطابق للقطة الشاشة 4)
+            lastAddedBanner?.let { banner ->
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = banner.first,
+                            color = MaterialTheme.colorScheme.inverseOnSurface,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    val textToShare = "سند قيد مسجل - بقالة العزي\nالعميل: ${customer.name}\n${banner.first}\nالرصيد المتبقي: ${customer.netBalance}"
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, textToShare)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "مشاركة السند عبر:"))
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "مشاركة",
+                                    tint = MaterialTheme.colorScheme.inverseOnSurface
+                                )
+                            }
+                            TextButton(onClick = { lastAddedBanner = null }) {
+                                Text("إخفاء", color = MaterialTheme.colorScheme.primaryContainer, fontSize = 12.sp)
+                            }
                         }
+                    }
+                }
+            }
+
+            // Balances Summary Strip
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = MaterialTheme.shapes.small
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("له", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${customer.totalLah}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("عليه", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${customer.totalAlayh}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("الرصيد", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "${customer.netBalance}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = if (customer.netBalance >= 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
                     }
                 }
             }
@@ -184,18 +457,18 @@ fun CustomerLedgerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "سجل العمليات والقيود (${transactions.size})",
+                    text = "سجل العمليات والقيود (${displayedTransactions.size})",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp
                 )
                 Text(
-                    text = "مرتبة بالتسلسل الزمني",
+                    text = if (ledgerSearchQuery.isNotBlank()) "نتائج البحث" else "مرتبة بالتسلسل الزمني",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            if (transactions.isEmpty()) {
+            if (displayedTransactions.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -206,27 +479,24 @@ fun CustomerLedgerScreen(
                         Icon(
                             imageVector = Icons.Default.ReceiptLong,
                             contentDescription = null,
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier.size(56.dp),
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("لا توجد قيود مسجلة لهذا الحساب حتى الآن", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Button(onClick = onAddTransaction) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = null)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("إضافة أول قيد مالي")
-                        }
+                        Text(
+                            text = if (ledgerSearchQuery.isNotBlank()) "لا توجد نتائج مطابقة لبحثك" else "لا توجد قيود مسجلة لهذا الحساب حتى الآن",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(transactions, key = { it.id }) { tx ->
+                    items(displayedTransactions, key = { it.id }) { tx ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()

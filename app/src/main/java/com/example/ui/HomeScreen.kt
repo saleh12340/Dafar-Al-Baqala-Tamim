@@ -52,6 +52,7 @@ fun HomeScreen(viewModel: AccountingViewModel) {
     var showHelpDialogState by remember { mutableStateOf(false) }
     var showPrintSettings by remember { mutableStateOf(false) }
     var showExitDialog by remember { mutableStateOf(false) }
+    var showImportContactsDialog by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -179,6 +180,27 @@ fun HomeScreen(viewModel: AccountingViewModel) {
                     } else {
                         "تعذر إغلاق الحساب"
                     }
+                }
+            },
+            onQuickAddTransaction = { amount, type, note, currencyId, dateMillis ->
+                val currencyName = when (currencyId) {
+                    2L -> "ريال سعودي"
+                    3L -> "دولار أمريكي"
+                    else -> "ريال يمني"
+                }
+                val newTx = TransactionModel(
+                    customerId = activeCustomer.id,
+                    customerName = activeCustomer.name,
+                    customerPhone = activeCustomer.phone,
+                    amount = amount,
+                    currencyId = currencyId,
+                    currencyName = currencyName,
+                    transactionType = type,
+                    timestamp = dateMillis,
+                    detailNote = note
+                )
+                viewModel.insertTransaction(newTx) {
+                    snackbarMessage = "تم قيد: $type $amount ${if (note.isNotBlank()) note else ""}".trim()
                 }
             }
         )
@@ -354,15 +376,28 @@ fun HomeScreen(viewModel: AccountingViewModel) {
                         Icon(imageVector = Icons.Default.Add, contentDescription = "إضافة عملية")
                     }
                 } else if (selectedTab == 1) {
-                    FloatingActionButton(
-                        onClick = {
-                            customerToEdit = null
-                            showAddCustomerDialog = true
-                        },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.testTag("fab_add_account")
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.PersonAdd, contentDescription = "إضافة عميل")
+                        ExtendedFloatingActionButton(
+                            onClick = { showImportContactsDialog = true },
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            icon = { Icon(Icons.Default.Contacts, contentDescription = null) },
+                            text = { Text("استيراد من جهات الاتصال", fontSize = 12.sp) },
+                            modifier = Modifier.testTag("fab_import_contacts")
+                        )
+                        FloatingActionButton(
+                            onClick = {
+                                customerToEdit = null
+                                showAddCustomerDialog = true
+                            },
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.testTag("fab_add_account")
+                        ) {
+                            Icon(imageVector = Icons.Default.PersonAdd, contentDescription = "إضافة عميل")
+                        }
                     }
                 }
             }
@@ -404,6 +439,9 @@ fun HomeScreen(viewModel: AccountingViewModel) {
                             viewModel.deleteCustomer(customerId) {
                                 snackbarMessage = "تم حذف الحساب والقيود المرتبطة بنجاح"
                             }
+                        },
+                        onImportContacts = {
+                            showImportContactsDialog = true
                         }
                     )
                     2 -> SettingsPanelScreen(
@@ -505,6 +543,27 @@ fun HomeScreen(viewModel: AccountingViewModel) {
             onDismiss = { showPrintSettings = false },
             onTestPrint = {
                 snackbarMessage = "تم إرسال أمر طباعة تجريبي لطابعة الفواتير (80mm)"
+            }
+        )
+    }
+
+    if (showImportContactsDialog) {
+        ImportContactsDialog(
+            onDismiss = { showImportContactsDialog = false },
+            onImportContact = { name, phone ->
+                val newCustomer = CustomerModel(
+                    name = name,
+                    phone = phone,
+                    accountDetails = "مستورد من جهات الاتصال"
+                )
+                viewModel.insertCustomer(newCustomer) { id ->
+                    if (id > 0) {
+                        snackbarMessage = "تم استيراد وإضافة العميل: $name بنجاح!"
+                        showImportContactsDialog = false
+                    } else {
+                        snackbarMessage = "فشل إضافة العميل"
+                    }
+                }
             }
         )
     }
@@ -695,7 +754,8 @@ fun AccountsListScreen(
     customers: List<CustomerModel>,
     onSelectCustomer: (CustomerModel) -> Unit,
     onEditCustomer: (CustomerModel) -> Unit,
-    onDeleteCustomer: (Long) -> Unit
+    onDeleteCustomer: (Long) -> Unit,
+    onImportContacts: () -> Unit = {}
 ) {
     var customerToDelete by remember { mutableStateOf<CustomerModel?>(null) }
     var selectedFilter by remember { mutableStateOf("الكل") } // "الكل", "مدين", "دائن", "مصفى"
@@ -713,6 +773,36 @@ fun AccountsListScreen(
     val creditorsCount = remember(customers) { customers.count { it.netBalance > 0.001 } }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // Quick Action Bar for Importing Contacts & Adding
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "دفتر العملاء (${customers.size})",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+
+                FilledTonalButton(
+                    onClick = onImportContacts,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("btn_import_contacts_accounts")
+                ) {
+                    Icon(imageVector = Icons.Default.Contacts, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("استيراد من جهات الاتصال", fontSize = 12.sp)
+                }
+            }
+        }
+
         // Debt status filter chips (ميزات دفتر الحسابات)
         Row(
             modifier = Modifier
